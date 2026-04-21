@@ -77,11 +77,16 @@ def calc_kelly_size(edge: float, fair_prob: float, bankroll: float) -> float:
     return round(max(0.0, capped * bankroll), 2)
 
 
+HEADERS = {
+    "User-Agent": "polymarket-edge-scanner/1.0 (paper trading research bot; not for commercial use)",
+    "Accept": "application/json",
+}
+
 def safe_get(url: str, params: dict = None, retries: int = 3) -> dict | list | None:
     """GET with retries and a polite delay. Returns None on failure."""
     for attempt in range(retries):
         try:
-            resp = requests.get(url, params=params, timeout=15)
+            resp = requests.get(url, params=params, headers=HEADERS, timeout=15)
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as e:
@@ -152,12 +157,13 @@ def fetch_metaculus_questions() -> list[dict]:
     Returns a list of dicts with: id, title, community_prob, num_forecasters.
     """
     log.info("Fetching Metaculus questions…")
-    url = "https://www.metaculus.com/api2/questions/"
+    url = "https://www.metaculus.com/api/questions/"
     params = {
-        "type":       "forecast",
-        "status":     "open",
-        "limit":      200,
-        "order_by":   "-activity",
+        "type":         "binary",
+        "status":       "open",
+        "limit":        200,
+        "order_by":     "-activity",
+        "has_community_prediction": "true",
     }
     data = safe_get(url, params)
     if not data or "results" not in data:
@@ -167,26 +173,27 @@ def fetch_metaculus_questions() -> list[dict]:
     questions = []
     for q in data.get("results", []):
         try:
-            resolution_criteria = q.get("possibilities", {}) or {}
-            # Only binary (yes/no) questions
-            if resolution_criteria.get("type") != "binary":
-                continue
-
-            community = q.get("community_prediction", {}) or {}
-            prob = community.get("full", {}).get("q2")  # median probability
+            # v3 API: community forecast lives here
+            cp = q.get("community_prediction") or q.get("cp_reveal_time")
+            prob = None
+            community = q.get("aggregations", {}).get("recency_weighted", {}).get("latest") or {}
+            prob = community.get("centers", [None])[0] if community.get("centers") else None
+            if prob is None:
+                # fallback to older field
+                prob = q.get("community_prediction")
             if prob is None:
                 continue
 
-            n_forecasters = q.get("number_of_forecasters", 0) or 0
+            n_forecasters = q.get("nr_forecasters", 0) or q.get("number_of_forecasters", 0) or 0
             if n_forecasters < MIN_FORECASTERS:
                 continue
 
             questions.append({
-                "id":            q.get("id"),
-                "title":         q.get("title", ""),
+                "id":             q.get("id"),
+                "title":          q.get("title", ""),
                 "community_prob": float(prob),
-                "n_forecasters": n_forecasters,
-                "url":           f"https://www.metaculus.com/questions/{q.get('id')}/",
+                "n_forecasters":  n_forecasters,
+                "url":            f"https://www.metaculus.com/questions/{q.get('id')}/",
             })
         except (KeyError, ValueError, TypeError):
             continue
