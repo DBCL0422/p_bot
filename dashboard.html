@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Polymarket Paper Trader</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0b0d;
+    --surface: #111318;
+    --surface2: #181c24;
+    --border: #1e2330;
+    --border2: #2a3045;
+    --text: #dde2ee;
+    --muted: #5a6280;
+    --dim: #2e3550;
+    --green: #1db87a;
+    --green-glow: rgba(29,184,122,0.15);
+    --green-dim: #0a2e1e;
+    --red: #e05252;
+    --red-dim: #2e0f0f;
+    --amber: #e8a020;
+    --amber-dim: #2e1f08;
+    --blue: #4f8ef7;
+    --blue-dim: #0d1e42;
+    --mono: 'DM Mono', monospace;
+    --serif: 'Instrument Serif', serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    min-height: 100vh;
+    padding: 2rem 1.5rem;
+  }
+
+  /* ── Masthead ── */
+  .masthead {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 1.25rem;
+    margin-bottom: 1.75rem;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .masthead-left {}
+  .brand {
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 28px;
+    color: var(--text);
+    letter-spacing: -0.02em;
+    line-height: 1;
+    margin-bottom: 6px;
+  }
+  .brand span { color: var(--green); }
+  .sub {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+  .live-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    color: var(--green);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    background: var(--green-dim);
+    border: 1px solid rgba(29,184,122,0.2);
+    border-radius: 20px;
+    padding: 5px 12px;
+  }
+  .pulse {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.8)} }
+
+  /* ── Metrics bar ── */
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 8px;
+    margin-bottom: 1.5rem;
+  }
+  .mc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    position: relative;
+    overflow: hidden;
+  }
+  .mc::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--dim);
+  }
+  .mc.accent::after { background: var(--green); }
+  .mc-l {
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .mc-v {
+    font-size: 22px;
+    font-weight: 500;
+    line-height: 1;
+  }
+  .mc-v.g { color: var(--green); }
+  .mc-v.r { color: var(--red); }
+  .mc-v.a { color: var(--amber); }
+  .mc-v.n { color: var(--text); }
+  .mc-v.b { color: var(--blue); }
+  .mc-sub { font-size: 10px; color: var(--muted); margin-top: 4px; }
+
+  /* ── Tabs ── */
+  .tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1.25rem;
+  }
+  .tab {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 8px 18px;
+    border: none;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color .15s;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--green); border-bottom-color: var(--green); }
+
+  /* ── Section ── */
+  .section { display: none; }
+  .section.active { display: block; }
+
+  /* ── Card ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin-bottom: 12px;
+  }
+  .card-title {
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+
+  /* ── Opportunity cards ── */
+  .opp {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--green);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .opp:hover { background: var(--surface2); }
+  .opp-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .opp-name {
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.4;
+    flex: 1;
+  }
+  .opp-cat {
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-top: 3px;
+  }
+  .edge-badge {
+    font-size: 10px;
+    font-weight: 500;
+    padding: 3px 9px;
+    border-radius: 4px;
+    background: var(--green-dim);
+    color: var(--green);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .opp-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .opp-stat {
+    background: var(--surface2);
+    border-radius: 6px;
+    padding: 8px 10px;
+  }
+  .opp-stat-l {
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .opp-stat-v { font-size: 13px; font-weight: 500; }
+  .opp-stat-v.g { color: var(--green); }
+  .opp-stat-v.a { color: var(--amber); }
+  .opp-stat-v.n { color: var(--text); }
+  .signals { display: flex; flex-wrap: wrap; gap: 5px; }
+  .signal-tag {
+    font-size: 9px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    background: var(--blue-dim);
+    color: var(--blue);
+    letter-spacing: 0.05em;
+  }
+  .bet-btn {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 6px 14px;
+    border-radius: 5px;
+    border: 1px solid var(--green);
+    background: var(--green-dim);
+    color: var(--green);
+    cursor: pointer;
+    transition: all .15s;
+    margin-top: 10px;
+  }
+  .bet-btn:hover { background: var(--green); color: var(--bg); }
+
+  /* ── Table ── */
+  table { width: 100%; border-collapse: collapse; font-size: 11px; table-layout: fixed; }
+  th {
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 6px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 9px 10px;
+    border-bottom: 1px solid var(--border);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--surface2); }
+
+  /* ── Pills ── */
+  .pill {
+    display: inline-block;
+    font-size: 9px;
+    padding: 2px 7px;
+    border-radius: 3px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+  }
+  .p-open  { background: var(--blue-dim);  color: var(--blue); }
+  .p-win   { background: var(--green-dim); color: var(--green); }
+  .p-loss  { background: var(--red-dim);   color: var(--red); }
+
+  /* ── Chart ── */
+  .chart-wrap { height: 180px; position: relative; }
+
+  /* ── Bankroll chart line ── */
+  canvas { width: 100% !important; }
+
+  /* ── Resolve btns ── */
+  .rbtn {
+    font-family: var(--mono);
+    font-size: 9px;
+    padding: 3px 8px;
+    border-radius: 3px;
+    border: 1px solid;
+    cursor: pointer;
+    background: transparent;
+    margin-right: 4px;
+  }
+  .rbtn.w { color: var(--green); border-color: var(--green-dim); }
+  .rbtn.w:hover { background: var(--green-dim); }
+  .rbtn.l { color: var(--red); border-color: var(--red-dim); }
+  .rbtn.l:hover { background: var(--red-dim); }
+
+  /* ── Empty state ── */
+  .empty {
+    text-align: center;
+    padding: 2.5rem;
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  /* ── Scan info ── */
+  .scan-info {
+    font-size: 10px;
+    color: var(--muted);
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .scan-info span { color: var(--text); }
+
+  /* ── Log form ── */
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+  .form-grid.three { grid-template-columns: 1fr 1fr 1fr; }
+  .fg label { font-size: 9px; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; display: block; margin-bottom: 5px; }
+  input, select, textarea {
+    width: 100%;
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 7px 10px;
+    border-radius: 5px;
+    border: 1px solid var(--border2);
+    background: var(--surface2);
+    color: var(--text);
+  }
+  textarea { height: 56px; resize: vertical; }
+  .primary-btn {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 8px 18px;
+    border-radius: 5px;
+    border: 1px solid var(--green);
+    background: var(--green);
+    color: var(--bg);
+    cursor: pointer;
+    font-weight: 500;
+  }
+  .primary-btn:hover { opacity: 0.85; }
+  .ghost-btn {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 8px 18px;
+    border-radius: 5px;
+    border: 1px solid var(--border2);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    margin-left: 8px;
+  }
+  .ghost-btn:hover { color: var(--text); border-color: var(--text); }
+  .hint { font-size: 10px; color: var(--muted); margin-top: 8px; line-height: 1.6; background: var(--surface2); border-radius: 5px; padding: 8px 10px; }
+
+  .pnl-pos { color: var(--green); }
+  .pnl-neg { color: var(--red); }
+
+  /* ── Setup banner ── */
+  .setup-banner {
+    background: var(--amber-dim);
+    border: 1px solid rgba(232,160,32,0.3);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 11px;
+    color: var(--amber);
+    line-height: 1.7;
+    margin-bottom: 1.25rem;
+  }
+  .setup-banner strong { color: var(--amber); }
+  code {
+    font-family: var(--mono);
+    font-size: 10px;
+    background: rgba(232,160,32,0.15);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+</style>
+</head>
+<body>
+
+<div class="masthead">
+  <div class="masthead-left">
+    <div class="brand">Paper <span>Trader</span></div>
+    <div class="sub">Polymarket · $1,000 trial · automated scanner</div>
+  </div>
+  <div class="live-pill"><div class="pulse"></div>Scanner active</div>
+</div>
+
+<div class="metrics" id="metrics"></div>
+
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('opportunities')">Opportunities</button>
+  <button class="tab" onclick="switchTab('positions')">Open positions</button>
+  <button class="tab" onclick="switchTab('history')">History</button>
+  <button class="tab" onclick="switchTab('log')">Log manual bet</button>
+</div>
+
+<!-- ── OPPORTUNITIES ── -->
+<div id="sec-opportunities" class="section active">
+  <div class="setup-banner" id="setup-banner" style="display:none">
+    <strong>Setup required:</strong> To load live scanner data, serve this file from your Render project directory so it can read <code>data/opportunities.json</code>. For now, any opportunities the scanner finds will appear here automatically once connected. You can still log bets manually using the "Log manual bet" tab.
+  </div>
+  <div class="scan-info" id="scan-info"></div>
+  <div id="opps-list"></div>
+</div>
+
+<!-- ── OPEN POSITIONS ── -->
+<div id="sec-positions" class="section">
+  <div class="card">
+    <div class="card-title">Open paper positions — resolve as markets settle</div>
+    <div id="open-table"></div>
+  </div>
+</div>
+
+<!-- ── HISTORY ── -->
+<div id="sec-history" class="section">
+  <div class="card">
+    <div class="card-title">Bankroll over time</div>
+    <div class="chart-wrap"><canvas id="bankroll-chart"></canvas></div>
+  </div>
+  <div class="card" style="margin-top:12px">
+    <div class="card-title">Resolved bets</div>
+    <div id="hist-table"></div>
+  </div>
+</div>
+
+<!-- ── LOG MANUAL BET ── -->
+<div id="sec-log" class="section">
+  <div class="card">
+    <div class="card-title">Log a paper bet manually</div>
+    <div class="form-grid">
+      <div class="fg"><label>Market name</label><input id="f-name" placeholder="e.g. GTA VI released before June 2026"></div>
+      <div class="fg"><label>Category</label>
+        <select id="f-cat"><option>Other</option><option>Economics</option><option>Politics</option><option>Science</option><option>Sports</option><option>Crypto</option></select>
+      </div>
+    </div>
+    <div class="form-grid three">
+      <div class="fg"><label>Market price (0–1)</label><input id="f-price" type="number" min="0.01" max="0.99" step="0.01" placeholder="0.01" oninput="updateSizing()"></div>
+      <div class="fg"><label>Direction</label><select id="f-dir"><option value="YES">YES</option><option value="NO">NO</option></select></div>
+      <div class="fg"><label>Expiry date</label><input id="f-exp" type="date"></div>
+    </div>
+    <div class="form-grid">
+      <div class="fg"><label>Edge signal / reasoning</label><textarea id="f-reason" placeholder="Why is this mispriced? e.g. Extreme low: 1¢ standalone binary with $28k 24hr volume"></textarea></div>
+      <div class="fg"><label>Suggested size</label><input id="f-size" readonly style="opacity:0.5"><div class="hint" id="f-hint">Enter price to calculate Kelly size</div></div>
+    </div>
+    <button class="primary-btn" onclick="logBet()">Log paper bet</button>
+    <button class="ghost-btn" onclick="clearForm()">Clear</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script>
+const STORAGE_KEY = 'pm_bets_v3';
+const START_BANK  = 1000;
+const MAX_PCT     = 0.04;
+const KELLY_FRAC  = 0.25;
+
+let bets = [];
+let scanData = null;
+let bankChart = null;
+
+// ── Persistence ──────────────────────────────────────────────────────────────
+function saveBets() { localStorage.setItem(STORAGE_KEY, JSON.stringify(bets)); }
+function loadBets() {
+  try { bets = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); }
+  catch(e) { bets = []; }
+}
+
+// ── Kelly sizing ─────────────────────────────────────────────────────────────
+function kellySize(edge, price) {
+  if (edge <= 0 || price <= 0 || price >= 1) return 0;
+  const p = price, q = 1-p, b = (1/p)-1;
+  const k = (b*p-q)/b;
+  return Math.max(0, Math.min(k*KELLY_FRAC, MAX_PCT)) * currentBank();
+}
+
+function currentBank() {
+  const reserved  = bets.filter(b=>b.status==='open').reduce((s,b)=>s+b.size,0);
+  const realised  = bets.filter(b=>b.status!=='open').reduce((s,b)=>s+(b.pnl||0),0);
+  return +(START_BANK - reserved + realised).toFixed(2);
+}
+
+function totalPnl() {
+  return +bets.filter(b=>b.status!=='open').reduce((s,b)=>s+(b.pnl||0),0).toFixed(2);
+}
+
+// ── Load scanner JSON (same-origin only) ─────────────────────────────────────
+async function loadScanData() {
+  try {
+    const r = await fetch('data/opportunities.json');
+    if (!r.ok) throw new Error('not found');
+    scanData = await r.json();
+    // Auto-log any new opportunities as paper bets
+    autoLogOpportunities(scanData.opportunities || []);
+  } catch(e) {
+    scanData = null;
+    document.getElementById('setup-banner').style.display = 'block';
+  }
+}
+
+function autoLogOpportunities(opps) {
+  let added = 0;
+  for (const opp of opps) {
+    // Don't double-log — check by market name + direction
+    const exists = bets.find(b => b.name === opp.market_name && b.dir === opp.direction && b.status === 'open');
+    if (exists) continue;
+    const edge = opp.edge_pct / 100;
+    const price = opp.price;
+    const size = Math.min(opp.kelly_size_usd, currentBank() * MAX_PCT);
+    if (size <= 0) continue;
+    bets.push({
+      id:        Date.now() + Math.random(),
+      name:      opp.market_name,
+      cat:       opp.category,
+      dir:       opp.direction,
+      price,
+      edge,
+      size:      +size.toFixed(2),
+      exp:       opp.expiry,
+      reason:    (opp.signals || []).join(' · '),
+      status:    'open',
+      placedAt:  new Date().toISOString().slice(0,10),
+      auto:      true,
+      pnl:       null,
+      closedAt:  null,
+    });
+    added++;
+  }
+  if (added > 0) { saveBets(); }
+}
+
+// ── Tabs ─────────────────────────────────────────────────────────────────────
+function switchTab(t) {
+  ['opportunities','positions','history','log'].forEach(s => {
+    document.getElementById('sec-'+s).classList.toggle('active', s===t);
+  });
+  document.querySelectorAll('.tab').forEach((el,i) => {
+    el.classList.toggle('active', ['opportunities','positions','history','log'][i]===t);
+  });
+  renderAll();
+}
+
+// ── Render metrics ────────────────────────────────────────────────────────────
+function renderMetrics() {
+  const open   = bets.filter(b=>b.status==='open');
+  const closed = bets.filter(b=>b.status!=='open');
+  const wins   = closed.filter(b=>b.status==='win');
+  const pnl    = totalPnl();
+  const bank   = currentBank();
+  const wr     = closed.length ? Math.round(wins.length/closed.length*100) : null;
+  const roi    = ((bank-START_BANK)/START_BANK*100).toFixed(1);
+  document.getElementById('metrics').innerHTML = `
+    <div class="mc accent">
+      <div class="mc-l">Bankroll</div>
+      <div class="mc-v ${bank>=START_BANK?'g':'r'}">$${bank.toFixed(0)}</div>
+      <div class="mc-sub">started $${START_BANK}</div>
+    </div>
+    <div class="mc">
+      <div class="mc-l">P&amp;L</div>
+      <div class="mc-v ${pnl>=0?'g':'r'}">${pnl>=0?'+':''}$${pnl.toFixed(0)}</div>
+      <div class="mc-sub">ROI ${roi}%</div>
+    </div>
+    <div class="mc">
+      <div class="mc-l">Win rate</div>
+      <div class="mc-v ${wr===null?'n':wr>=55?'g':'r'}">${wr!==null?wr+'%':'—'}</div>
+      <div class="mc-sub">${wins.length}/${closed.length} resolved</div>
+    </div>
+    <div class="mc">
+      <div class="mc-l">Open bets</div>
+      <div class="mc-v b">${open.length}</div>
+      <div class="mc-sub">$${open.reduce((s,b)=>s+b.size,0).toFixed(0)} at risk</div>
+    </div>
+    <div class="mc">
+      <div class="mc-l">Total bets</div>
+      <div class="mc-v n">${bets.length}</div>
+      <div class="mc-sub">${bets.filter(b=>b.auto).length} auto-logged</div>
+    </div>
+  `;
+}
+
+// ── Render opportunities ──────────────────────────────────────────────────────
+function renderOpportunities() {
+  const el = document.getElementById('opps-list');
+  const si = document.getElementById('scan-info');
+
+  if (!scanData) {
+    si.innerHTML = '';
+    el.innerHTML = `<div class="empty">No scanner data loaded yet.<br>The scanner writes to <code style="color:var(--amber);background:var(--amber-dim);padding:1px 5px;border-radius:3px">data/opportunities.json</code> every 4 hours.<br>Use "Log manual bet" to add positions in the meantime.</div>`;
+    return;
+  }
+
+  const opps = scanData.opportunities || [];
+  const last = new Date(scanData.last_scan).toLocaleString();
+  si.innerHTML = `Last scan: <span>${last}</span> · Found: <span>${scanData.total_found}</span> · Min edge: <span>${scanData.min_edge_pct}%</span>`;
+
+  if (!opps.length) {
+    el.innerHTML = `<div class="empty">No opportunities above ${scanData.min_edge_pct}% edge threshold this scan.<br>Check back after the next scan.</div>`;
+    return;
+  }
+
+  el.innerHTML = opps.map(opp => {
+    const alreadyBet = bets.find(b => b.name===opp.market_name && b.dir===opp.direction && b.status==='open');
+    return `<div class="opp">
+      <div class="opp-top">
+        <div>
+          <div class="opp-name">${opp.market_name}</div>
+          <div class="opp-cat">${opp.category} · Bet ${opp.direction}</div>
+        </div>
+        <div class="edge-badge">+${opp.edge_pct}% edge</div>
+      </div>
+      <div class="opp-grid">
+        <div class="opp-stat"><div class="opp-stat-l">Price</div><div class="opp-stat-v n">${Math.round(opp.price*100)}¢</div></div>
+        <div class="opp-stat"><div class="opp-stat-l">Kelly size</div><div class="opp-stat-v a">$${opp.kelly_size_usd}</div></div>
+        <div class="opp-stat"><div class="opp-stat-l">Volume</div><div class="opp-stat-v n">$${(opp.volume_usd/1000).toFixed(0)}k</div></div>
+        <div class="opp-stat"><div class="opp-stat-l">Expires</div><div class="opp-stat-v n">${opp.expiry}</div></div>
+      </div>
+      <div class="signals">${(opp.signals||[]).map(s=>`<span class="signal-tag">${s}</span>`).join('')}</div>
+      ${alreadyBet
+        ? `<div style="font-size:10px;color:var(--green);margin-top:10px">✓ Paper bet logged ($${alreadyBet.size.toFixed(2)})</div>`
+        : `<button class="bet-btn" onclick="logFromOpp(${JSON.stringify(opp).replace(/"/g,'&quot;')})">Log paper bet →</button>`
+      }
+    </div>`;
+  }).join('');
+}
+
+// ── Render open positions ─────────────────────────────────────────────────────
+function renderPositions() {
+  const open = bets.filter(b=>b.status==='open');
+  const wrap = document.getElementById('open-table');
+  if (!open.length) { wrap.innerHTML = '<div class="empty">No open positions.</div>'; return; }
+  wrap.innerHTML = `<table>
+    <thead><tr>
+      <th style="width:30%">Market</th>
+      <th style="width:8%">Dir</th>
+      <th style="width:8%">Price</th>
+      <th style="width:8%">Edge</th>
+      <th style="width:10%">Size</th>
+      <th style="width:10%">To win</th>
+      <th style="width:9%">Placed</th>
+      <th style="width:9%">Exp</th>
+      <th style="width:8%"></th>
+    </tr></thead>
+    <tbody>${open.map(b => {
+      const toWin = (b.size*((1/b.price)-1)).toFixed(2);
+      return `<tr>
+        <td title="${b.name}">${b.name}</td>
+        <td><span class="pill p-open">${b.dir}</span></td>
+        <td>${Math.round(b.price*100)}¢</td>
+        <td>${(b.edge*100).toFixed(1)}%</td>
+        <td>$${b.size.toFixed(2)}</td>
+        <td style="color:var(--green)">+$${toWin}</td>
+        <td style="color:var(--muted)">${b.placedAt||'—'}</td>
+        <td style="color:var(--muted)">${b.exp||'—'}</td>
+        <td>
+          <button class="rbtn w" onclick="resolve(${b.id},true)">Won</button>
+          <button class="rbtn l" onclick="resolve(${b.id},false)">Lost</button>
+        </td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
+}
+
+// ── Render history ────────────────────────────────────────────────────────────
+function renderHistory() {
+  const closed = bets.filter(b=>b.status!=='open').sort((a,b)=>a.closedAt>b.closedAt?-1:1);
+  const wrap   = document.getElementById('hist-table');
+  if (!closed.length) { wrap.innerHTML = '<div class="empty">No resolved bets yet.</div>'; }
+  else wrap.innerHTML = `<table>
+    <thead><tr>
+      <th style="width:32%">Market</th>
+      <th style="width:8%">Dir</th>
+      <th style="width:9%">Edge</th>
+      <th style="width:9%">Size</th>
+      <th style="width:9%">P&amp;L</th>
+      <th style="width:9%">Result</th>
+      <th style="width:12%">Closed</th>
+    </tr></thead>
+    <tbody>${closed.map(b=>`<tr>
+      <td title="${b.name}">${b.name}</td>
+      <td>${b.dir}</td>
+      <td>${(b.edge*100).toFixed(1)}%</td>
+      <td>$${b.size.toFixed(2)}</td>
+      <td class="${b.pnl>=0?'pnl-pos':'pnl-neg'}">${b.pnl>=0?'+':''}$${b.pnl.toFixed(2)}</td>
+      <td><span class="pill ${b.status==='win'?'p-win':'p-loss'}">${b.status}</span></td>
+      <td style="color:var(--muted)">${b.closedAt||'—'}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+
+  // Bankroll chart
+  const sorted = [...bets].filter(b=>b.status!=='open').sort((a,b)=>a.closedAt>b.closedAt?1:-1);
+  let running = START_BANK;
+  const pts = [{x:'Start',y:START_BANK}];
+  sorted.forEach(b=>{ running+=b.pnl||0; pts.push({x:b.closedAt||'?',y:+running.toFixed(2)}); });
+  pts.push({x:'Now',y:+currentBank().toFixed(2)});
+
+  const canvas = document.getElementById('bankroll-chart');
+  if (bankChart) bankChart.destroy();
+  bankChart = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels: pts.map(p=>p.x),
+      datasets: [
+        { data: pts.map(p=>p.y), borderColor:'#1db87a', backgroundColor:'rgba(29,184,122,0.07)', borderWidth:2, pointRadius:3, tension:0.35, fill:true },
+        { data: pts.map(()=>START_BANK), borderColor:'rgba(90,98,128,0.3)', borderWidth:1, pointRadius:0, borderDash:[4,4] }
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false} },
+      scales:{
+        x:{ ticks:{color:'#5a6280',font:{size:9,family:'DM Mono'}}, grid:{color:'rgba(30,35,48,0.8)'} },
+        y:{ ticks:{color:'#5a6280',font:{size:9,family:'DM Mono'},callback:v=>'$'+v}, grid:{color:'rgba(30,35,48,0.8)'} }
+      }
+    }
+  });
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────────
+function resolve(id, won) {
+  const b = bets.find(x=>x.id===id); if(!b) return;
+  b.status   = won ? 'win' : 'loss';
+  b.pnl      = won ? +(b.size*((1/b.price)-1)).toFixed(2) : -b.size;
+  b.closedAt = new Date().toISOString().slice(0,10);
+  saveBets(); renderAll();
+}
+
+function logFromOpp(opp) {
+  const size = Math.min(opp.kelly_size_usd, currentBank() * MAX_PCT);
+  bets.push({
+    id: Date.now()+Math.random(),
+    name: opp.market_name, cat: opp.category,
+    dir: opp.direction, price: opp.price,
+    edge: opp.edge_pct/100, size: +size.toFixed(2),
+    exp: opp.expiry, reason: (opp.signals||[]).join(' · '),
+    status:'open', placedAt: new Date().toISOString().slice(0,10),
+    auto:false, pnl:null, closedAt:null,
+  });
+  saveBets(); renderAll();
+}
+
+function updateSizing() {
+  const price = parseFloat(document.getElementById('f-price').value);
+  if (!price || price<=0 || price>=1) { document.getElementById('f-size').value=''; return; }
+  const edge = price < 0.05 ? (0.05-price) : price > 0.95 ? (price-0.95) : 0.05;
+  const size = kellySize(edge, price);
+  document.getElementById('f-size').value = size > 0 ? '$'+size.toFixed(2) : 'No edge';
+  document.getElementById('f-hint').textContent =
+    `${(edge*100).toFixed(1)}% estimated edge · Quarter-Kelly · max 4% of $${currentBank().toFixed(0)} bankroll`;
+}
+
+function logBet() {
+  const name  = document.getElementById('f-name').value.trim();
+  const price = parseFloat(document.getElementById('f-price').value);
+  const dir   = document.getElementById('f-dir').value;
+  const exp   = document.getElementById('f-exp').value;
+  const reason= document.getElementById('f-reason').value.trim();
+  const cat   = document.getElementById('f-cat').value;
+  if (!name || !price || !reason) { alert('Please fill in market name, price, and reasoning.'); return; }
+  const edge = price < 0.05 ? (0.05-price) : price > 0.95 ? (price-0.95) : 0.05;
+  const size = kellySize(edge, price);
+  bets.push({
+    id: Date.now()+Math.random(), name, cat, dir, price,
+    edge, size: +size.toFixed(2), exp, reason,
+    status:'open', placedAt: new Date().toISOString().slice(0,10),
+    auto:false, pnl:null, closedAt:null,
+  });
+  saveBets(); clearForm(); switchTab('positions');
+}
+
+function clearForm() {
+  ['f-name','f-price','f-exp','f-reason','f-size'].forEach(id=>{document.getElementById(id).value='';});
+  document.getElementById('f-hint').textContent = 'Enter price to calculate Kelly size';
+}
+
+function renderAll() {
+  renderMetrics();
+  renderOpportunities();
+  renderPositions();
+  renderHistory();
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+loadBets();
+loadScanData().then(renderAll);
+</script>
+</body>
+</html>
