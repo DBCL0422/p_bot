@@ -1,16 +1,19 @@
 """
 Polymarket Edge Scanner
 -----------------------
-Polls Polymarket + Metaculus every 4 hours, finds markets where the two
-disagree by more than MIN_EDGE_PCT, sizes bets with quarter-Kelly, and
-writes results to data/opportunities.json for the dashboard to read.
+Polls Polymarket + Manifold Markets every 4 hours, finds markets where the
+two platforms disagree by more than MIN_EDGE_PCT, sizes bets with
+quarter-Kelly, and writes results to data/opportunities.json.
+
+Why Manifold instead of Metaculus?
+  Metaculus requires authentication for bulk API access.
+  Manifold Markets has a fully open, no-auth-required public API.
 
 No coding experience needed — just follow SETUP.md.
 """
 
 import json
 import time
-import math
 import logging
 import os
 import requests
@@ -18,14 +21,14 @@ from datetime import datetime, timezone
 from difflib import SequenceMatcher
 
 # ── Config ────────────────────────────────────────────────────────────────────
-BANKROLL          = float(os.getenv("BANKROLL", 1000))   # Your starting bankroll in $
-MIN_EDGE_PCT      = float(os.getenv("MIN_EDGE_PCT", 5))  # Minimum edge % to flag (default 5%)
-MAX_BET_PCT       = 0.04                                  # Max 4% of bankroll per bet
-KELLY_FRACTION    = 0.25                                  # Quarter-Kelly (conservative)
-MIN_VOLUME        = 10_000                                # Ignore thin markets below $10k volume
-MIN_FORECASTERS   = 50                                    # Ignore Metaculus q's with < 50 forecasters
-MATCH_THRESHOLD   = 0.55                                  # Title similarity score to count as a match
-SCAN_INTERVAL_SEC = 4 * 60 * 60                           # 4 hours between scans
+BANKROLL          = float(os.getenv("BANKROLL", 1000))  # Starting bankroll in $
+MIN_EDGE_PCT      = float(os.getenv("MIN_EDGE_PCT", 5)) # Minimum edge % to flag
+MAX_BET_PCT       = 0.04                                 # Hard cap: 4% of bankroll per bet
+KELLY_FRACTION    = 0.25                                 # Quarter-Kelly (conservative)
+MIN_POLY_VOLUME   = 10_000                               # Skip Polymarket markets below $10k volume
+MIN_MANIFOLD_VOL  = 500                                  # Skip Manifold markets below M$500 volume
+MATCH_THRESHOLD   = 0.52                                 # Title similarity to count as a match
+SCAN_INTERVAL_SEC = 4 * 60 * 60                          # 4 hours between scans
 OUTPUT_FILE       = "data/opportunities.json"
 LOG_FILE          = "data/scanner.log"
 
@@ -36,80 +39,57 @@ logging.basicConfig(
     format="%(asctime)s  %(levelname)s  %(message)s",
     handlers=[
         logging.FileHandler(LOG_FILE),
-        logging.StreamHandler(),          # also prints to terminal
+        logging.StreamHandler(),
     ]
 )
 log = logging.getLogger(__name__)
+
+HEADERS = {
+    "User-Agent": "polymarket-edge-scanner/1.0 (paper trading research; non-commercial)",
+    "Accept":     "application/json",
+}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def similarity(a: str, b: str) -> float:
-    """Return 0-1 similarity score between two strings (case-insensitive)."""
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
 
-def calc_edge(poly_price: float, meta_prob: float, direction: str) -> float:
-    """
-    Edge = how much better your fair value is vs the market price.
-    If direction is YES: you're buying, so edge = fair_value - price.
-    If direction is NO:  you're selling YES (buying NO), edge = price - fair_value.
-    """
-    if direction == "YES":
-        return meta_prob - poly_price
-    else:
-        return poly_price - meta_prob
+def calc_edge(poly_price: float, ext_prob: float, direction: str) -> float:
+    return (ext_prob - poly_price) if direction == "YES" else (poly_price - ext_prob)
 
 
 def calc_kelly_size(edge: float, fair_prob: float, bankroll: float) -> float:
-    """
-    Quarter-Kelly position sizing, hard-capped at MAX_BET_PCT of bankroll.
-    Returns dollar amount to bet.
-    """
-    if edge <= 0 or fair_prob <= 0 or fair_prob >= 1:
+    if edge <= 0 or not (0 < fair_prob < 1):
         return 0.0
     p = fair_prob
     q = 1 - p
-    b = (1 / p) - 1          # decimal odds
-    kelly = (b * p - q) / b   # full Kelly fraction
-    frac_kelly = kelly * KELLY_FRACTION
-    capped = min(frac_kelly, MAX_BET_PCT)
-    return round(max(0.0, capped * bankroll), 2)
+    b = (1 / p) - 1
+    kelly = (b * p - q) / b
+    return round(max(0.0, min(kelly * KELLY_FRACTION, MAX_BET_PCT) * bankroll), 2)
 
 
-HEADERS = {
-    "User-Agent": "polymarket-edge-scanner/1.0 (paper trading research bot; not for commercial use)",
-    "Accept": "application/json",
-}
-
-def safe_get(url: str, params: dict = None, retries: int = 3) -> dict | list | None:
-    """GET with retries and a polite delay. Returns None on failure."""
+def safe_get(url: str, params: dict = None, retries: int = 3):
     for attempt in range(retries):
         try:
-            resp = requests.get(url, params=params, headers=HEADERS, timeout=15)
-            resp.raise_for_status()
-            return resp.json()
+            r = requests.get(url, params=params, headers=HEADERS, timeout=15)
+            r.raise_for_status()
+            return r.json()
         except requests.RequestException as e:
             log.warning(f"Request failed (attempt {attempt+1}/{retries}): {url} — {e}")
-            time.sleep(2 ** attempt)   # exponential backoff: 1s, 2s, 4s
+            time.sleep(2 ** attempt)
     return None
 
 
 # ── Data fetching ─────────────────────────────────────────────────────────────
 
-def fetch_polymarket_markets() -> list[dict]:
-    """
-    Fetch active binary markets from Polymarket's Gamma API.
-    Returns a list of dicts with: id, question, probability, volume, end_date.
-    """
-    log.info("Fetching Polymarket markets…")
-    url = "https://gamma-api.polymarket.com/markets"
-    params = {
-        "active": "true",
-        "closed": "false",
-        "limit": 200,
-    }
-    data = safe_get(url, params)
+def fetch_polymarket_markets() -> list:
+    log.info("Fetching Polymarket markets...")
+    data = safe_get(
+        "https://gamma-api.polymarket.com/markets",
+        params={"active": "true", "closed": "false", "limit": 200},
+    )
     if not data:
         log.error("Failed to fetch Polymarket markets.")
         return []
@@ -117,7 +97,6 @@ def fetch_polymarket_markets() -> list[dict]:
     markets = []
     for m in data:
         try:
-            # Only keep binary (yes/no) markets with enough volume
             outcomes = m.get("outcomes", "[]")
             if isinstance(outcomes, str):
                 outcomes = json.loads(outcomes)
@@ -131,190 +110,167 @@ def fetch_polymarket_markets() -> list[dict]:
                 continue
 
             yes_price = float(prices[0])
-            volume = float(m.get("volumeNum", 0) or 0)
-            if volume < MIN_VOLUME:
+            volume    = float(m.get("volumeNum", 0) or 0)
+            if volume < MIN_POLY_VOLUME:
                 continue
 
             markets.append({
-                "id":        m.get("id", ""),
                 "question":  m.get("question", ""),
                 "yes_price": yes_price,
                 "volume":    volume,
-                "end_date":  m.get("endDate", "")[:10] if m.get("endDate") else "—",
-                "category":  m.get("category", "Other") or "Other",
+                "end_date":  (m.get("endDate") or "")[:10] or "—",
+                "category":  m.get("category") or "Other",
                 "url":       f"https://polymarket.com/event/{m.get('slug', '')}",
             })
         except (KeyError, ValueError, TypeError):
             continue
 
-    log.info(f"  → {len(markets)} Polymarket markets with volume > ${MIN_VOLUME:,}")
+    log.info(f"  -> {len(markets)} Polymarket markets (volume > ${MIN_POLY_VOLUME:,})")
     return markets
 
 
-def fetch_metaculus_questions() -> list[dict]:
+def fetch_manifold_markets() -> list:
     """
-    Fetch recent binary questions from Metaculus with community forecasts.
-    Returns a list of dicts with: id, title, community_prob, num_forecasters.
+    Manifold Markets: fully open API, no authentication required.
+    Prices represent crowd probability, equivalent to Metaculus community forecasts.
+    API docs: https://docs.manifold.markets/api
     """
-    log.info("Fetching Metaculus questions…")
-    url = "https://www.metaculus.com/api/questions/"
-    params = {
-        "type":         "binary",
-        "status":       "open",
-        "limit":        200,
-        "order_by":     "-activity",
-        "has_community_prediction": "true",
-    }
-    data = safe_get(url, params)
-    if not data or "results" not in data:
-        log.error("Failed to fetch Metaculus questions.")
+    log.info("Fetching Manifold Markets...")
+    data = safe_get(
+        "https://api.manifold.markets/v0/markets",
+        params={"limit": 500, "sort": "liquidity"},
+    )
+    if not data:
+        log.error("Failed to fetch Manifold markets.")
         return []
 
     questions = []
-    for q in data.get("results", []):
+    for m in data:
         try:
-            # v3 API: community forecast lives here
-            cp = q.get("community_prediction") or q.get("cp_reveal_time")
-            prob = None
-            community = q.get("aggregations", {}).get("recency_weighted", {}).get("latest") or {}
-            prob = community.get("centers", [None])[0] if community.get("centers") else None
-            if prob is None:
-                # fallback to older field
-                prob = q.get("community_prediction")
-            if prob is None:
+            if m.get("outcomeType") != "BINARY":
+                continue
+            if m.get("isResolved"):
                 continue
 
-            n_forecasters = q.get("nr_forecasters", 0) or q.get("number_of_forecasters", 0) or 0
-            if n_forecasters < MIN_FORECASTERS:
+            prob   = m.get("probability")
+            volume = m.get("volume", 0) or 0
+
+            if prob is None or volume < MIN_MANIFOLD_VOL:
                 continue
 
             questions.append({
-                "id":             q.get("id"),
-                "title":          q.get("title", ""),
+                "title":          m.get("question", ""),
                 "community_prob": float(prob),
-                "n_forecasters":  n_forecasters,
-                "url":            f"https://www.metaculus.com/questions/{q.get('id')}/",
+                "volume":         volume,
+                "n_traders":      m.get("uniqueBettorCount", 0) or 0,
+                "url":            m.get("url", ""),
             })
         except (KeyError, ValueError, TypeError):
             continue
 
-    log.info(f"  → {len(questions)} Metaculus questions with ≥ {MIN_FORECASTERS} forecasters")
+    log.info(f"  -> {len(questions)} Manifold markets (volume > M${MIN_MANIFOLD_VOL})")
     return questions
 
 
 # ── Matching & edge detection ─────────────────────────────────────────────────
 
-def match_markets(poly_markets: list[dict], meta_questions: list[dict]) -> list[dict]:
-    """
-    Fuzzy-match Polymarket markets to Metaculus questions by title similarity.
-    For each match above MATCH_THRESHOLD, compute edge in both directions and
-    keep whichever direction has positive edge.
-    """
-    log.info("Matching markets and computing edge…")
+def match_and_score(poly_markets: list, manifold_markets: list) -> list:
+    log.info("Matching markets and computing edge...")
+    min_edge = MIN_EDGE_PCT / 100
     opportunities = []
 
     for pm in poly_markets:
         best_score = 0
-        best_meta  = None
+        best_mf    = None
 
-        for mq in meta_questions:
-            score = similarity(pm["question"], mq["title"])
-            if score > best_score:
-                best_score = score
-                best_meta  = mq
+        for mf in manifold_markets:
+            s = similarity(pm["question"], mf["title"])
+            if s > best_score:
+                best_score = s
+                best_mf    = mf
 
-        if best_score < MATCH_THRESHOLD or best_meta is None:
-            continue   # No confident match found
+        if best_score < MATCH_THRESHOLD or best_mf is None:
+            continue
 
-        yes_price  = pm["yes_price"]
-        meta_prob  = best_meta["community_prob"]
-        min_edge   = MIN_EDGE_PCT / 100
+        yes_price = pm["yes_price"]
+        ext_prob  = best_mf["community_prob"]
 
-        # Check YES direction
-        edge_yes = calc_edge(yes_price, meta_prob, "YES")
-        # Check NO direction
-        edge_no  = calc_edge(yes_price, meta_prob, "NO")
+        edge_yes = calc_edge(yes_price, ext_prob, "YES")
+        edge_no  = calc_edge(yes_price, ext_prob, "NO")
 
-        # Pick the better direction (if any clears the threshold)
         if edge_yes >= min_edge and edge_yes >= edge_no:
-            direction = "YES"
-            edge      = edge_yes
-            fair_prob = meta_prob
+            direction, edge, fair = "YES", edge_yes, ext_prob
         elif edge_no >= min_edge:
-            direction = "NO"
-            edge      = edge_no
-            fair_prob = 1 - meta_prob
+            direction, edge, fair = "NO", edge_no, 1 - ext_prob
         else:
-            continue   # Edge too small in both directions
+            continue
 
-        size = calc_kelly_size(edge, fair_prob, BANKROLL)
+        size = calc_kelly_size(edge, fair, BANKROLL)
         if size <= 0:
             continue
 
         opportunities.append({
-            "market_name":      pm["question"],
-            "category":         pm["category"],
-            "direction":        direction,
-            "poly_price":       round(yes_price, 4),
-            "meta_prob":        round(meta_prob, 4),
-            "edge_pct":         round(edge * 100, 2),
-            "kelly_size_usd":   size,
-            "bankroll":         BANKROLL,
-            "volume_usd":       pm["volume"],
-            "expiry":           pm["end_date"],
-            "match_score_pct":  round(best_score * 100, 1),
-            "n_forecasters":    best_meta["n_forecasters"],
-            "poly_url":         pm["url"],
-            "meta_url":         best_meta["url"],
-            "scanned_at":       datetime.now(timezone.utc).isoformat(),
+            "market_name":     pm["question"],
+            "category":        pm["category"],
+            "direction":       direction,
+            "poly_price":      round(yes_price, 4),
+            "manifold_prob":   round(ext_prob, 4),
+            "edge_pct":        round(edge * 100, 2),
+            "kelly_size_usd":  size,
+            "bankroll":        BANKROLL,
+            "volume_usd":      pm["volume"],
+            "expiry":          pm["end_date"],
+            "match_score_pct": round(best_score * 100, 1),
+            "n_traders":       best_mf["n_traders"],
+            "poly_url":        pm["url"],
+            "manifold_url":    best_mf["url"],
+            "scanned_at":      datetime.now(timezone.utc).isoformat(),
         })
 
-    # Sort by edge descending
     opportunities.sort(key=lambda x: x["edge_pct"], reverse=True)
-    log.info(f"  → {len(opportunities)} opportunities above {MIN_EDGE_PCT}% edge threshold")
+    log.info(f"  -> {len(opportunities)} opportunities above {MIN_EDGE_PCT}% edge")
     return opportunities
 
 
 # ── Output ────────────────────────────────────────────────────────────────────
 
-def write_output(opportunities: list[dict]) -> None:
-    """Write opportunities + metadata to JSON for the dashboard."""
+def write_output(opportunities: list) -> None:
     output = {
-        "last_scan":        datetime.now(timezone.utc).isoformat(),
-        "bankroll":         BANKROLL,
-        "min_edge_pct":     MIN_EDGE_PCT,
-        "total_found":      len(opportunities),
-        "opportunities":    opportunities,
+        "last_scan":     datetime.now(timezone.utc).isoformat(),
+        "bankroll":      BANKROLL,
+        "min_edge_pct":  MIN_EDGE_PCT,
+        "total_found":   len(opportunities),
+        "opportunities": opportunities,
     }
     with open(OUTPUT_FILE, "w") as f:
         json.dump(output, f, indent=2)
-    log.info(f"Results written to {OUTPUT_FILE}")
+    log.info(f"Results written -> {OUTPUT_FILE}")
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 def run_scan() -> None:
     log.info("=" * 55)
-    log.info(f"Starting scan  |  bankroll=${BANKROLL}  |  min_edge={MIN_EDGE_PCT}%")
+    log.info(f"Scan start  |  bankroll=${BANKROLL}  |  min_edge={MIN_EDGE_PCT}%")
     log.info("=" * 55)
 
-    poly   = fetch_polymarket_markets()
-    meta   = fetch_metaculus_questions()
+    poly     = fetch_polymarket_markets()
+    manifold = fetch_manifold_markets()
 
-    if not poly or not meta:
+    if not poly or not manifold:
         log.error("Scan aborted — could not fetch data from one or both APIs.")
         return
 
-    opps   = match_markets(poly, meta)
+    opps = match_and_score(poly, manifold)
     write_output(opps)
     log.info(f"Scan complete. Next scan in {SCAN_INTERVAL_SEC // 3600} hours.\n")
 
 
 if __name__ == "__main__":
-    log.info("Polymarket Edge Scanner started.")
+    log.info("Polymarket Edge Scanner started. Forecast source: Manifold Markets.")
     while True:
         try:
             run_scan()
         except Exception as e:
-            log.exception(f"Unexpected error during scan: {e}")
+            log.exception(f"Unexpected error: {e}")
         time.sleep(SCAN_INTERVAL_SEC)
