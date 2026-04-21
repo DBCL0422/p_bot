@@ -1,8 +1,8 @@
 """
 Polymarket Edge Scanner
 -----------------------
-Polls Polymarket + Metaculus every 4 hours, finds markets where they
-disagree by more than MIN_EDGE_PCT, and writes results to data/opportunities.json.
+Polls Polymarket + Metaculus every 4 hours, finds edge opportunities,
+and writes results to data/opportunities.json.
 
 Requires a free Metaculus API token — see SETUP.md for how to get one.
 """
@@ -14,12 +14,12 @@ from difflib import SequenceMatcher
 # ── Config ────────────────────────────────────────────────────────────────────
 BANKROLL          = float(os.getenv("BANKROLL", 1000))
 MIN_EDGE_PCT      = float(os.getenv("MIN_EDGE_PCT", 5))
-METACULUS_TOKEN   = os.getenv("METACULUS_TOKEN", "")   # Set this in Render environment
+METACULUS_TOKEN   = os.getenv("METACULUS_TOKEN", "")
 MAX_BET_PCT       = 0.04
 KELLY_FRACTION    = 0.25
 MIN_POLY_VOLUME   = 10_000
-MIN_FORECASTERS   = 40
-MATCH_THRESHOLD   = 0.50
+MIN_FORECASTERS   = 30
+MATCH_THRESHOLD   = 0.48
 SCAN_INTERVAL_SEC = 4 * 60 * 60
 OUTPUT_FILE       = "data/opportunities.json"
 LOG_FILE          = "data/scanner.log"
@@ -98,7 +98,7 @@ def fetch_polymarket_markets():
         except (KeyError, ValueError, TypeError):
             continue
 
-    log.info(f"  -> {len(markets)} markets (volume > ${MIN_POLY_VOLUME:,})")
+    log.info(f"  -> {len(markets)} Polymarket markets (volume > ${MIN_POLY_VOLUME:,})")
     return markets
 
 # ── Metaculus ─────────────────────────────────────────────────────────────────
@@ -110,37 +110,82 @@ def fetch_metaculus_questions():
         return []
 
     auth_headers = {"Authorization": f"Token {METACULUS_TOKEN}"}
+
+    # Correct params confirmed from Metaculus's own API documentation examples
+    params = {
+        "limit":         200,
+        "offset":        0,
+        "has_group":     "false",
+        "order_by":      "-activity",
+        "forecast_type": "binary",   # correct param name (not "type")
+        "status":        "open",
+        "include_description": "false",
+    }
+
     data = safe_get(
         "https://www.metaculus.com/api2/questions/",
-        params={"type": "forecast", "status": "open", "limit": 200,
-                "order_by": "-activity", "format": "json"},
+        params=params,
         headers=auth_headers
     )
-    if not data or "results" not in data:
+
+    if not data:
         log.error("Failed to fetch Metaculus questions.")
         return []
 
+    # Handle both paginated and direct list responses
+    results = data.get("results", data) if isinstance(data, dict) else data
+    if not isinstance(results, list):
+        log.error(f"Unexpected Metaculus response format: {type(results)}")
+        return []
+
+    log.info(f"  -> Raw results from Metaculus: {len(results)}")
+
     questions = []
-    for q in data.get("results", []):
+    for q in results:
         try:
-            if q.get("possibilities", {}).get("type") != "binary":
+            # community_prediction can be in different places depending on API version
+            prob = None
+
+            # Try the standard api2 location first
+            cp = q.get("community_prediction")
+            if isinstance(cp, dict):
+                prob = cp.get("full", {}).get("q2") or cp.get("q2") or cp.get("median")
+
+            # Fallback: try prediction field directly
+            if prob is None:
+                prob = q.get("prediction")
+
+            # Fallback: try metaculus_prediction
+            if prob is None:
+                mp = q.get("metaculus_prediction", {}) or {}
+                if isinstance(mp, dict):
+                    prob = mp.get("full", {}).get("q2")
+
+            if prob is None:
                 continue
-            community = q.get("community_prediction", {}) or {}
-            prob = community.get("full", {}).get("q2")
-            if prob is None: continue
-            n = q.get("number_of_forecasters", 0) or 0
-            if n < MIN_FORECASTERS: continue
+
+            prob = float(prob)
+            if not (0 < prob < 1):
+                continue
+
+            n = q.get("nr_forecasters") or q.get("number_of_forecasters") or 0
+            if n < MIN_FORECASTERS:
+                continue
+
+            title = q.get("title") or q.get("url_title") or ""
+            if not title:
+                continue
 
             questions.append({
-                "title":          q.get("title", ""),
-                "community_prob": float(prob),
+                "title":          title,
+                "community_prob": prob,
                 "n_forecasters":  n,
                 "url":            f"https://www.metaculus.com/questions/{q.get('id')}/",
             })
-        except (KeyError, ValueError, TypeError):
+        except (KeyError, ValueError, TypeError) as e:
             continue
 
-    log.info(f"  -> {len(questions)} Metaculus questions (>= {MIN_FORECASTERS} forecasters)")
+    log.info(f"  -> {len(questions)} usable Metaculus questions (>= {MIN_FORECASTERS} forecasters)")
     return questions
 
 # ── Match & score ─────────────────────────────────────────────────────────────
@@ -173,7 +218,8 @@ def match_and_score(poly_markets, meta_questions):
             continue
 
         size = calc_kelly_size(edge, fair, BANKROLL)
-        if size <= 0: continue
+        if size <= 0:
+            continue
 
         opportunities.append({
             "market_name":     pm["question"],
