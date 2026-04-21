@@ -815,7 +815,15 @@ function renderAll() {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 loadBets();
-loadScanData().then(renderAll);
+// Auto-refresh every 5 minutes
+async function refresh() {
+  await loadScanData();
+  renderAll();
+  const el = document.querySelector(".live-pill");
+  if (el) el.title = "Last refreshed: " + new Date().toLocaleTimeString();
+}
+refresh();
+setInterval(refresh, 5 * 60 * 1000);
 </script>
 </body>
 </html>

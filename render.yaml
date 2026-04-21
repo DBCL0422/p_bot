@@ -1,9 +1,9 @@
 services:
-  - type: worker
+  - type: web
     name: polymarket-edge-scanner
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python scanner.py
+    startCommand: bash start.sh
     envVars:
       - key: BANKROLL
         value: 1000
