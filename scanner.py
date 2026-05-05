@@ -20,7 +20,7 @@ import json, time, logging, os, requests
 from datetime import datetime, timezone
 
 BANKROLL          = float(os.getenv("BANKROLL", 1000))
-MIN_EDGE_PCT      = float(os.getenv("MIN_EDGE_PCT", 5))
+MIN_EDGE_PCT      = float(os.getenv("MIN_EDGE_PCT", 3))
 MAX_BET_PCT       = 0.04
 KELLY_FRACTION    = 0.25
 MIN_VOLUME        = 10_000
@@ -135,9 +135,9 @@ def find_opportunities(markets):
         # ── Signal 1: MOMENTUM REVERSAL ───────────────────────────────────
         # Large weekly move with thin recent volume = likely noise.
         # Require decent liquidity so we're not trading an empty market.
-        if wpc is not None and liq > 8_000:
+        if wpc is not None and liq > 3_000:
             wpc_f = float(wpc)
-            if abs(wpc_f) >= 0.07 and vol24 < 3_000:
+            if abs(wpc_f) >= 0.04 and vol24 < 5_000:
                 if wpc_f > 0:
                     direction = "NO"
                     price     = no
@@ -153,7 +153,7 @@ def find_opportunities(markets):
         # ── Signal 2: EXTREME MISPRICING ──────────────────────────────────
         # Only flag standalone binary markets (not tournament fields).
         # Require strong recent volume so the price is actively maintained.
-        if not field and vol24 > 5_000:
+        if not field and vol24 > 1_000:
             if yes < 0.03:
                 direction = "YES"
                 price     = yes
@@ -175,7 +175,7 @@ def find_opportunities(markets):
 
         # ── Signal 3: WIDE SPREAD on liquid market ────────────────────────
         # Spread > 4% with > $25k liquidity = market maker uncertainty.
-        if spread > 0.04 and liq > 25_000:
+        if spread > 0.025 and liq > 10_000:
             side_direction = "YES" if yes <= 0.5 else "NO"
             side_price     = yes if yes <= 0.5 else no
             side_edge      = spread * 0.5
